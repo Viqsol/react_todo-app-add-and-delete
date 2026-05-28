@@ -2,17 +2,23 @@
 /* eslint-disable jsx-a11y/control-has-associated-label */
 /* eslint-disable jsx-a11y/label-has-associated-control */
 /* eslint-disable jsx-a11y/control-has-associated-label */
-import React, { useEffect, useState } from 'react';
+import React, { FormEvent, useEffect, useState } from 'react';
 import { UserWarning } from './UserWarning';
-import { getTodos, USER_ID } from './api/todos';
+import { createTodo, deleteTodo, getTodos, USER_ID } from './api/todos';
 import { ErrorMessage, Status, Todo } from './types/Todo';
 import classNames from 'classnames';
-import { getFilteredTodos } from './utils/helper';
+import { getActiveTodos, getFilteredTodos } from './utils/helper';
+import { TodoItem } from './components';
 
 export const App: React.FC = () => {
   const [todos, setTodos] = useState<Todo[]>([]);
   const [errorMessage, setErrorMessage] = useState('');
   const [statusFilter, setStatusFilter] = useState(Status.all);
+  const [newTitle, setNewTitle] = useState('');
+  const [tempTodo, setTempTodo] = useState<Todo | null>(null);
+  const [waitingDeleteTodos, setWaitingDeleteTodos] = useState<number[]>([]);
+  const [keyToForm, setKeyToForm] = useState(0);
+  const [formDisabled, setFormDisabled] = useState(false);
 
   useEffect(() => {
     getTodos()
@@ -37,15 +43,67 @@ export const App: React.FC = () => {
     return <UserWarning />;
   }
 
-  function getActiveTodos(allTodos: Todo[]) {
-    return allTodos.filter(todo => !todo.completed);
-  }
+  const handleDeleteTodo = (id: number) => {
+    setWaitingDeleteTodos(current => [...current, id]);
+    deleteTodo(id)
+      .then(() => {
+        setTodos(current => current.filter(todo => todo.id !== id));
+      })
+      .catch(() => {
+        setErrorMessage(ErrorMessage.Delete);
+      })
+      .finally(() => {
+        setWaitingDeleteTodos(current => current.filter(item => item !== id));
+        setKeyToForm(current => current + 1);
+      });
+  };
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const normalizedTitle = newTitle.trim();
+
+    if (!normalizedTitle) {
+      setErrorMessage(ErrorMessage.TitleEmpty);
+
+      return;
+    }
+
+    setTempTodo({
+      id: 0,
+      title: normalizedTitle,
+      completed: false,
+      userId: USER_ID,
+    });
+
+    setFormDisabled(true);
+
+    createTodo(normalizedTitle)
+      .then(todo => {
+        setTodos(current => [...current, todo]);
+        setNewTitle('');
+      })
+      .catch(() => setErrorMessage(ErrorMessage.Add))
+      .finally(() => {
+        setTempTodo(null);
+        setKeyToForm(current => current + 1);
+        setFormDisabled(false);
+      });
+  };
+
+  const handleBundleDelete = () => {
+    for (const todo of todos) {
+      if (todo.completed) {
+        handleDeleteTodo(todo.id);
+      }
+    }
+  };
 
   // const showTodosAndFooter = todos.length > 0;
   const showToggleAllButton = todos.length > 0;
   const activeTodos = getActiveTodos(todos);
   const filteredTodos = getFilteredTodos(todos, statusFilter);
   const isAllCompleted = todos.length > 0 && activeTodos.length === 0;
+  const completedTodos = todos.length - activeTodos.length;
 
   return (
     <div className="todoapp">
@@ -63,57 +121,33 @@ export const App: React.FC = () => {
           />
 
           {/* Add a todo on form submit */}
-          <form>
+          <form onSubmit={handleSubmit} key={keyToForm}>
             <input
               data-cy="NewTodoField"
               type="text"
               className="todoapp__new-todo"
               placeholder="What needs to be done?"
+              value={newTitle}
+              onChange={event => setNewTitle(event.target.value)}
+              autoFocus
+              disabled={formDisabled}
             />
           </form>
         </header>
 
         <section className="todoapp__main" data-cy="TodoList">
-          {/* This is a completed todo */}
-          {filteredTodos.map(todo => {
-            return (
-              <div
-                key={todo.id}
-                data-cy="Todo"
-                className={classNames('todo is-active', {
-                  'todo completed': todo.completed,
-                })}
-              >
-                <label className="todo__status-label">
-                  <input
-                    data-cy="TodoStatus"
-                    type="checkbox"
-                    className="todo__status"
-                    checked={todo.completed}
-                  />
-                </label>
+          {filteredTodos.map(todo => (
+            <TodoItem
+              key={todo.id}
+              todo={todo}
+              onDelete={handleDeleteTodo}
+              loader={waitingDeleteTodos.includes(todo.id)}
+            />
+          ))}
 
-                <span data-cy="TodoTitle" className="todo__title">
-                  {todo.title}
-                </span>
-
-                {/* Remove button appears only on hover */}
-                <button
-                  type="button"
-                  className="todo__remove"
-                  data-cy="TodoDelete"
-                >
-                  ×
-                </button>
-
-                {/* overlay will cover the todo while it is being deleted or updated */}
-                <div data-cy="TodoLoader" className="modal overlay">
-                  <div className="modal-background has-background-white-ter" />
-                  <div className="loader" />
-                </div>
-              </div>
-            );
-          })}
+          {tempTodo && (
+            <TodoItem todo={tempTodo} loader={true} onDelete={() => {}} />
+          )}
         </section>
 
         {/* Hide the footer if there are no todos */}
@@ -164,6 +198,8 @@ export const App: React.FC = () => {
               type="button"
               className="todoapp__clear-completed"
               data-cy="ClearCompletedButton"
+              onClick={handleBundleDelete}
+              disabled={completedTodos < 1}
             >
               Clear completed
             </button>
